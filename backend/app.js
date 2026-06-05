@@ -4,28 +4,19 @@ const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const { Low, JSONFile } = require('lowdb');
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-app.use(cors());
-app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, '..', 'public')));
-
-// LowDB setup
+const { LowSync, JSONFileSync } = require('lowdb');
 const dbFile = path.join(__dirname, 'db.json');
-const adapter = new JSONFile(dbFile);
-const db = new Low(adapter);
+const adapter = new JSONFileSync(dbFile);
+const db = new LowSync(adapter);
 
-async function initDB() {
-  await db.read();
-  db.data = db.data || { users: [], medicines: [], intakeLogs: [] };
-  await db.write();
-}
+db.read();
+if (!db.data) db.data = { users: [], medicines: [], intakeLogs: [] };
 
-initDB();
+db.write();
 
 // Middleware to verify JWT
 function authenticateToken(req, res, next) {
@@ -147,68 +138,9 @@ app.get('/api/intake/history', authenticateToken, async (req, res) => {
 
 // Reminder and intake tracking
 
-// Initialize additional tables
-db.run(`CREATE TABLE IF NOT EXISTS reminders (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  medicine_id INTEGER NOT NULL,
-  reminder_time TEXT NOT NULL,
-  recurrence TEXT NOT NULL, -- daily, weekly, custom
-  snooze_until TEXT,
-  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-  FOREIGN KEY(medicine_id) REFERENCES medicines(id) ON DELETE CASCADE
-)`);
+// Reminder and intake tracking routes disabled (SQLite code removed). Use lowdb for future implementation.
+// TODO: Implement reminders using lowdb (e.g., db.data.reminders, db.data.intakeLogs).
 
-db.run(`CREATE TABLE IF NOT EXISTS intake_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  reminder_id INTEGER NOT NULL,
-  status TEXT NOT NULL, -- taken, skipped, snoozed
-  timestamp TEXT NOT NULL,
-  FOREIGN KEY(reminder_id) REFERENCES reminders(id) ON DELETE CASCADE
-)`);
-
-// Create a reminder
-app.post('/api/reminders', authenticateToken, (req, res) => {
-  const { medicine_id, reminder_time, recurrence } = req.body;
-  const stmt = db.prepare('INSERT INTO reminders (user_id, medicine_id, reminder_time, recurrence) VALUES (?, ?, ?, ?)');
-  stmt.run(req.user.id, medicine_id, reminder_time, recurrence, function (err) {
-    if (err) return res.status(400).json({ error: err.message });
-    res.json({ id: this.lastID });
-  });
-});
-
-// Get due reminders (within next minute)
-app.get('/api/reminders/due', authenticateToken, (req, res) => {
-  const now = new Date();
-  const next = new Date(now.getTime() + 60000); // 1 minute ahead
-  const nowStr = now.toISOString();
-  const nextStr = next.toISOString();
-  db.all(`SELECT r.id, r.medicine_id, r.reminder_time, r.recurrence, m.name, m.dosage FROM reminders r
-    JOIN medicines m ON r.medicine_id = m.id
-    WHERE r.user_id = ? AND r.reminder_time BETWEEN ? AND ?`,
-    [req.user.id, nowStr, nextStr], (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows);
-    });
-});
-
-// Record intake response
-app.post('/api/intake/:reminderId', authenticateToken, (req, res) => {
-  const { reminderId } = req.params;
-  const { status } = req.body; // taken, skipped, snoozed
-  const stmt = db.prepare('INSERT INTO intake_logs (reminder_id, status, timestamp) VALUES (?, ?, ?)');
-  stmt.run(reminderId, status, new Date().toISOString(), function (err) {
-    if (err) return res.status(400).json({ error: err.message });
-    // If snoozed, update snooze_until (example: add 10 minutes)
-    if (status === "snoozed") {
-      const snoozeUntil = new Date(Date.now() + 10 * 60000).toISOString();
-      db.run('UPDATE reminders SET snooze_until = ? WHERE id = ?', [snoozeUntil, reminderId]);
-    }
-    res.json({ id: this.lastID });
-  });
-});
-
-// Update recurrence after snooze or missed handling could be added later
 
 app.listen(PORT, () => {
   console.log(`Server listening on http://localhost:${PORT}`);
