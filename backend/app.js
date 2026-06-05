@@ -3,6 +3,8 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fetch = require('node-fetch'); // for OpenFDA lookup
+const { cron } = require('./cronJobs'); // schedule refill & expiry alerts
 const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -68,7 +70,22 @@ app.get('/api/medicines', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/medicines', authenticateToken, async (req, res) => {
-  const { name, category, dosage, frequency, start_date, end_date, notes, reminder_time, repeat, custom_days, snooze_minutes } = req.body;
+  const {
+    name,
+    category,
+    dosage,
+    frequency,
+    start_date,
+    end_date,
+    notes,
+    reminder_time,
+    repeat,
+    custom_days,
+    snooze_minutes,
+    stock,
+    lowThreshold,
+    expiry_date
+  } = req.body;
   await db.read();
   const newMed = {
     id: Date.now(),
@@ -80,10 +97,13 @@ app.post('/api/medicines', authenticateToken, async (req, res) => {
     start_date,
     end_date,
     notes,
-    reminder_time: reminder_time || null, // e.g., "08:00"
-    repeat: repeat || 'daily', // daily, weekly, custom
-    custom_days: custom_days || [], // array of weekday numbers 0-6 for custom
-    snooze_minutes: snooze_minutes || 5
+    reminder_time: reminder_time || null,
+    repeat: repeat || 'daily',
+    custom_days: custom_days || [],
+    snooze_minutes: snooze_minutes || 5,
+    stock: typeof stock === 'number' ? stock : null,
+    lowThreshold: typeof lowThreshold === 'number' ? lowThreshold : null,
+    expiry_date: expiry_date || null
   };
   db.data.medicines.push(newMed);
   await db.write();
@@ -137,7 +157,52 @@ app.get('/api/intake/history', authenticateToken, async (req, res) => {
 });
 
 // Reminder and intake tracking
+// Low‑stock reminder endpoint
+app.get('/api/medicines/low-stock', authenticateToken, async (req, res) => {
+  await db.read();
+  const meds = db.data.medicines.filter(m =>
+    m.user_id === req.user.id &&
+    typeof m.stock === 'number' &&
+    typeof m.lowThreshold === 'number' &&
+    m.stock <= m.lowThreshold
+  );
+  res.json(meds);
+});
 
+// Expiring medicines endpoint (next 30 days)
+app.get('/api/medicines/expiring', authenticateToken, async (req, res) => {
+  await db.read();
+  const now = new Date();
+  const meds = db.data.medicines.filter(m => {
+    if (m.user_id !== req.user.id || !m.expiry_date) return false;
+    const expiry = new Date(m.expiry_date);
+    const diffDays = Math.round((expiry - now) / (1000 * 60 * 60 * 24));
+    return diffDays >= 0 && diffDays <= 30;
+  });
+  res.json(meds);
+});
+
+// Barcode / QR lookup via OpenFDA (simple wrapper)
+app.get('/api/medicines/lookup/:code', authenticateToken, async (req, res) => {
+  const { code } = req.params;
+  try {
+    const response = await fetch(`https://api.fda.gov/drug/label.json?search=product_ndc:${code}`);
+    const data = await response.json();
+    if (data.results && data.results.length > 0) {
+      const result = data.results[0];
+      res.json({
+        name: result.openfda?.brand_name?.[0] || '',
+        manufacturer: result.openfda?.manufacturer_name?.[0] || '',
+        dosage: result.dosage_and_administration?.[0] || ''
+      });
+    } else {
+      res.status(404).json({ error: 'No data found for code' });
+    }
+  } catch (err) {
+    console.error('OpenFDA lookup error', err);
+    res.status(500).json({ error: 'Lookup failed' });
+  }
+});
 // Reminder and intake tracking routes disabled (SQLite code removed). Use lowdb for future implementation.
 // TODO: Implement reminders using lowdb (e.g., db.data.reminders, db.data.intakeLogs).
 
