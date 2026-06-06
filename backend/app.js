@@ -16,7 +16,7 @@ const adapter = new JSONFileSync(dbFile);
 const db = new LowSync(adapter);
 
 db.read();
-if (!db.data) db.data = { users: [], medicines: [], intakeLogs: [] };
+if (!db.data) db.data = { users: [], medicines: [], intakeLogs: [], health_records: [], reminder_locations: [] };
 
 db.write();
 
