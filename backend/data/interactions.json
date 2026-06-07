@@ -1,0 +1,17 @@
+[
+  {
+    "drugA": "Paracetamol",
+    "drugB": "Ibuprofen",
+    "warning": "Concurrent use may increase risk of gastrointestinal bleeding."
+  },
+  {
+    "drugA": "Warfarin",
+    "drugB": "Aspirin",
+    "warning": "Combined use can significantly increase bleeding risk."
+  },
+  {
+    "drugA": "Lisinopril",
+    "drugB": "Potassium supplement",
+    "warning": "May cause hyperkalemia. Monitor potassium levels."
+  }
+]
